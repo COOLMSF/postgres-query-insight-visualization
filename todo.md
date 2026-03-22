@@ -1,0 +1,47 @@
+# PG Query Optimizer Visualizer - TODO
+
+- [x] Design database schema for optimization process storage
+- [x] Implement PostgreSQL C extension plugin (pg_query_optimizer_tracer)
+  - [x] post_parse_analyze_hook - capture parse/analyze stage
+  - [x] planner_hook - capture planning/optimization stage
+  - [x] ExecutorStart_hook - capture execution start
+  - [x] ExecutorEnd_hook - capture execution end
+  - [x] Store optimization data to dedicated tables
+- [x] Implement Python FastAPI backend service
+  - [x] REST API for query optimization records
+  - [x] API for replay functionality
+  - [x] API for comparison functionality
+  - [x] API for interactive control (pause/step/resume)
+  - [x] WebSocket for real-time updates
+- [x] Design and implement Web frontend visualization
+  - [x] Elegant dark theme design with professional styling
+  - [x] Pipeline stage visualization (Parse → Analyze → Rewrite → Plan → Execute)
+  - [x] Tree diagram for execution plans
+  - [x] Flowchart for join orders and scan methods
+  - [x] Cost estimation visualization
+  - [x] Statistics display
+- [x] Implement interactive control functionality
+  - [x] Pause at any intermediate stage
+  - [x] Single-step execution
+  - [x] View intermediate results
+- [x] Implement replay functionality
+  - [x] Read historical records from database
+  - [x] Replay each stage with animation
+  - [x] Playback speed control
+- [x] Implement comparison functionality
+  - [x] Side-by-side comparison of optimization paths
+  - [x] Highlight differences in plans
+  - [x] Compare cost estimations
+- [x] Write one-click installation script
+  - [x] Auto-install PostgreSQL 14
+  - [x] Compile and install C extension
+  - [x] Deploy Python backend
+  - [x] Start frontend
+  - [x] Test script for verification
+- [x] Write documentation and thesis template
+  - [x] README with deployment instructions
+  - [x] Usage guide
+  - [x] Graduation thesis report template (Chinese)
+  - [x] Architecture documentation
+  - [x] API reference documentation
+- [x] Package all code for delivery
