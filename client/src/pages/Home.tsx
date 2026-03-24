@@ -87,6 +87,7 @@ export default function Home() {
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(1000);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyzeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // tRPC hooks for real-time mode
   const { analyze, testConnection } = useQueryAnalyzer();
@@ -96,17 +97,52 @@ export default function Home() {
     if (dataMode === "realtime") {
       testConnection.refetch();
     }
-  }, [dataMode]);
+  }, [dataMode, testConnection]);
 
-  const activeStage = useMemo(() => {
-    if (activeStageSeq === null) return null;
-    return stages.find(s => s.stage_seq === activeStageSeq) || null;
-  }, [stages, activeStageSeq]);
+  // Clear timers on unmount to avoid stale async updates
+  useEffect(() => {
+    return () => {
+      if (analyzeTimerRef.current) {
+        clearInterval(analyzeTimerRef.current);
+        analyzeTimerRef.current = null;
+      }
+      if (replayTimerRef.current) {
+        clearInterval(replayTimerRef.current);
+        replayTimerRef.current = null;
+      }
+    };
+  }, []);
 
-  const realtimeActiveStage = useMemo(() => {
-    if (activeStageSeq === null) return null;
-    return realtimeStages.find(s => s.stageSeq === activeStageSeq) || null;
-  }, [realtimeStages, activeStageSeq]);
+  // Active stage state - computed via effect to avoid render-time issues
+  const [activeStage, setActiveStage] = useState<TraceStage | null>(null);
+  const [realtimeActiveStage, setRealtimeActiveStage] = useState<OptimizationStage | null>(null);
+
+  // Update active stage when dependencies change
+  useEffect(() => {
+    // Find mock mode active stage
+    let foundMock: TraceStage | null = null;
+    if (activeStageSeq != null && stages.length > 0) {
+      for (let i = 0; i < stages.length; i++) {
+        if (stages[i].stage_seq === activeStageSeq) {
+          foundMock = stages[i];
+          break;
+        }
+      }
+    }
+    setActiveStage(foundMock);
+
+    // Find realtime mode active stage
+    let foundRealtime: OptimizationStage | null = null;
+    if (activeStageSeq != null && realtimeStages.length > 0) {
+      for (let i = 0; i < realtimeStages.length; i++) {
+        if (realtimeStages[i].stageSeq === activeStageSeq) {
+          foundRealtime = realtimeStages[i];
+          break;
+        }
+      }
+    }
+    setRealtimeActiveStage(foundRealtime);
+  }, [activeStageSeq, stages, realtimeStages]);
 
   // Handle query analysis
   const handleAnalyze = useCallback(() => {
@@ -132,14 +168,25 @@ export default function Home() {
       setSelectedSession(session);
       setActiveStageSeq(null);
 
+      if (analyzeTimerRef.current) {
+        clearInterval(analyzeTimerRef.current);
+        analyzeTimerRef.current = null;
+      }
+
       let stageIdx = 0;
-      const interval = setInterval(() => {
+      analyzeTimerRef.current = setInterval(() => {
         if (stageIdx < sessionStages.length) {
-          setStages(prev => [...prev, sessionStages[stageIdx]]);
-          setActiveStageSeq(sessionStages[stageIdx].stage_seq);
+          const nextStage = sessionStages[stageIdx];
+          if (nextStage) {
+            setStages(prev => [...prev, nextStage]);
+            setActiveStageSeq(nextStage.stage_seq);
+          }
           stageIdx++;
         } else {
-          clearInterval(interval);
+          if (analyzeTimerRef.current) {
+            clearInterval(analyzeTimerRef.current);
+            analyzeTimerRef.current = null;
+          }
           setIsAnalyzing(false);
           toast.success("查询优化分析完成", {
             description: `${sessionStages.length} 个阶段，耗时${session.total_duration_ms}毫秒`,
@@ -175,12 +222,19 @@ export default function Home() {
 
   // Replay controls
   const startReplay = useCallback(() => {
-    const currentStages = dataMode === "mock" ? stages : realtimeStages;
-    if (currentStages.length === 0) return;
-    setReplayMode(true);
-    setReplayStage(0);
-    setReplayPlaying(true);
-    setActiveStageSeq(currentStages[0].stage_seq || currentStages[0].stageSeq || null);
+    if (dataMode === "mock") {
+      if (stages.length === 0) return;
+      setReplayMode(true);
+      setReplayStage(0);
+      setReplayPlaying(true);
+      setActiveStageSeq(stages[0].stage_seq);
+    } else {
+      if (realtimeStages.length === 0) return;
+      setReplayMode(true);
+      setReplayStage(0);
+      setReplayPlaying(true);
+      setActiveStageSeq(realtimeStages[0].stageSeq);
+    }
   }, [stages, realtimeStages, dataMode]);
 
   const toggleReplayPause = useCallback(() => {
@@ -188,42 +242,74 @@ export default function Home() {
   }, []);
 
   const replayStep = useCallback(() => {
-    const currentStages = dataMode === "mock" ? stages : realtimeStages;
-    setReplayStage(prev => {
-      const next = Math.min(prev + 1, currentStages.length - 1);
-      const stageSeq = (currentStages[next] as any).stage_seq ?? (currentStages[next] as any).stageSeq;
-      setActiveStageSeq(stageSeq);
-      return next;
-    });
+    if (dataMode === "mock") {
+      setReplayStage(prev => {
+        const next = Math.min(prev + 1, stages.length - 1);
+        const nextStage = stages[next];
+        if (nextStage) {
+          setActiveStageSeq(nextStage.stage_seq);
+        }
+        return next;
+      });
+    } else {
+      setReplayStage(prev => {
+        const next = Math.min(prev + 1, realtimeStages.length - 1);
+        const nextStage = realtimeStages[next];
+        if (nextStage) {
+          setActiveStageSeq(nextStage.stageSeq);
+        }
+        return next;
+      });
+    }
   }, [stages, realtimeStages, dataMode]);
 
   const resetReplay = useCallback(() => {
     setReplayMode(false);
     setReplayPlaying(false);
     setReplayStage(0);
-    const currentStages = dataMode === "mock" ? stages : realtimeStages;
-    if (currentStages.length > 0) {
-      const firstStageSeq = (currentStages[0] as any).stage_seq ?? (currentStages[0] as any).stageSeq;
-      setActiveStageSeq(firstStageSeq);
+    if (dataMode === "mock") {
+      if (stages.length > 0) {
+        setActiveStageSeq(stages[0].stage_seq);
+      }
+    } else {
+      if (realtimeStages.length > 0) {
+        setActiveStageSeq(realtimeStages[0].stageSeq);
+      }
     }
   }, [stages, realtimeStages, dataMode]);
 
   useEffect(() => {
     if (replayPlaying && replayMode) {
-      const currentStages = dataMode === "mock" ? stages : realtimeStages;
       if (replayTimerRef.current) clearInterval(replayTimerRef.current);
-      
+
       replayTimerRef.current = setInterval(() => {
-        setReplayStage(prev => {
-          if (prev >= currentStages.length - 1) {
-            setReplayPlaying(false);
-            return prev;
-          }
-          const next = prev + 1;
-          const stageSeq = (currentStages[next] as any).stage_seq ?? (currentStages[next] as any).stageSeq;
-          setActiveStageSeq(stageSeq);
-          return next;
-        });
+        if (dataMode === "mock") {
+          setReplayStage(prev => {
+            if (prev >= stages.length - 1) {
+              setReplayPlaying(false);
+              return prev;
+            }
+            const next = prev + 1;
+            const nextStage = stages[next];
+            if (nextStage) {
+              setActiveStageSeq(nextStage.stage_seq);
+            }
+            return next;
+          });
+        } else {
+          setReplayStage(prev => {
+            if (prev >= realtimeStages.length - 1) {
+              setReplayPlaying(false);
+              return prev;
+            }
+            const next = prev + 1;
+            const nextStage = realtimeStages[next];
+            if (nextStage) {
+              setActiveStageSeq(nextStage.stageSeq);
+            }
+            return next;
+          });
+        }
       }, replaySpeed);
     } else if (replayTimerRef.current) {
       clearInterval(replayTimerRef.current);
@@ -236,9 +322,16 @@ export default function Home() {
   }, [replayPlaying, replayMode, replaySpeed, stages, realtimeStages, dataMode]);
 
   const currentSession = dataMode === "mock" ? selectedSession : realtimeSession;
-  const currentStages = dataMode === "mock" ? stages : realtimeStages;
+  const currentStages = useMemo(
+    () =>
+      (dataMode === "mock" ? stages : realtimeStages).filter(
+        (stage): stage is NonNullable<typeof stage> => stage != null
+      ),
+    [dataMode, stages, realtimeStages]
+  );
   const currentPaths = dataMode === "mock" ? DEMO_PATHS[(currentSession as any)?.session_id ?? 1] || [] : realtimePaths;
   const displayActiveStage = dataMode === "mock" ? activeStage : realtimeActiveStage;
+  const displayActiveStageForDetail = dataMode === "mock" ? activeStage : null; // StageDetail only works with TraceStage for now
 
   const isDbConnected = testConnection.data?.success ?? false;
   const isAnalyzingRealtime = analyze.isPending;
@@ -535,17 +628,17 @@ export default function Home() {
                 stages={currentStages.map(s => ({
                   stage_seq: (s as any).stage_seq ?? (s as any).stageSeq,
                   stage_name: (s as any).stage_name ?? (s as any).stageName,
-                  duration_ms: (s as any).duration_ms ?? (s as any).durationMs,
+                  actual_duration_ms: (s as any).duration_ms ?? (s as any).durationMs ?? 0,
+                  stage_id: (s as any).stage_id,
                 }))}
-                activeStageSeq={activeStageSeq ?? (displayActiveStage as any)?.stage_seq ?? (displayActiveStage as any)?.stageSeq}
+                activeStageSeq={activeStageSeq}
                 onStageClick={(seq) => setActiveStageSeq(seq)}
               />
 
               {/* Stage Detail */}
-              {displayActiveStage && (
+              {displayActiveStageForDetail && (
                 <StageDetail
-                  stage={displayActiveStage}
-                  paths={currentPaths}
+                  stage={displayActiveStageForDetail}
                 />
               )}
 

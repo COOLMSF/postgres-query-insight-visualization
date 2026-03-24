@@ -1,4 +1,4 @@
-import { STAGE_CONFIG, type TraceStage } from "@/lib/mockData";
+import { STAGE_CONFIG } from "@/lib/mockData";
 import { cn } from "@/lib/utils";
 import { FileCode, Search, RefreshCw, Route, FileText, Play, CheckCircle, ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
@@ -13,9 +13,16 @@ const STAGE_ICONS: Record<string, React.ElementType> = {
   execute_end: CheckCircle,
 };
 
+interface PipelineStage {
+  stage_seq: number;
+  stage_name: string;
+  actual_duration_ms: number;
+  stage_id?: number;
+}
+
 interface StagePipelineProps {
-  stages: TraceStage[];
-  activeStage: number | null;
+  stages: PipelineStage[];
+  activeStageSeq: number | null;
   onStageClick: (stageSeq: number) => void;
   replayMode?: boolean;
   currentReplayStage?: number;
@@ -23,7 +30,7 @@ interface StagePipelineProps {
 
 export default function StagePipeline({
   stages,
-  activeStage,
+  activeStageSeq,
   onStageClick,
   replayMode = false,
   currentReplayStage = -1,
@@ -37,14 +44,14 @@ export default function StagePipeline({
           description: "",
         };
         const Icon = STAGE_ICONS[stage.stage_name] || FileCode;
-        const isActive = activeStage === stage.stage_seq;
+        const isActive = activeStageSeq === stage.stage_seq;
         const isCompleted = replayMode
           ? stage.stage_seq <= currentReplayStage
           : true;
         const isPending = replayMode && stage.stage_seq > currentReplayStage;
 
         return (
-          <div key={stage.stage_id} className="flex items-center shrink-0">
+          <div key={stage.stage_id ?? stage.stage_seq} className="flex items-center shrink-0">
             <motion.button
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

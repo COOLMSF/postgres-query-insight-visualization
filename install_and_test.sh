@@ -195,6 +195,76 @@ install_dependencies() {
     fi
 }
 
+# 运行数据库迁移
+run_db_migrations() {
+    print_info "正在执行数据库迁移..."
+    set -a
+    source .env
+    set +a
+
+    if pnpm db:push; then
+        print_success "数据库迁移完成"
+    else
+        print_error "数据库迁移失败"
+        exit 1
+    fi
+}
+
+# 创建实时模式演示表和数据
+seed_realtime_demo_data() {
+    print_info "正在创建实时模式演示数据..."
+
+    sudo -u postgres psql -d pg_query_demo <<'SQL'
+CREATE TABLE IF NOT EXISTS demo_departments (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS demo_employees (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    department_id INTEGER NOT NULL REFERENCES demo_departments(id),
+    department TEXT NOT NULL,
+    salary INTEGER NOT NULL CHECK (salary > 0)
+);
+
+INSERT INTO demo_departments (name)
+VALUES ('Engineering'), ('Sales'), ('HR'), ('Finance')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO demo_employees (name, department_id, department, salary)
+SELECT e.name, d.id, d.name, e.salary
+FROM (
+    VALUES
+      ('Alice', 'Engineering', 90000),
+      ('Bob', 'Engineering', 78000),
+      ('Carol', 'Engineering', 65000),
+      ('David', 'Sales', 62000),
+      ('Eva', 'Sales', 71000),
+      ('Frank', 'HR', 56000),
+      ('Grace', 'Finance', 83000),
+      ('Henry', 'Finance', 72000)
+) AS e(name, department, salary)
+JOIN demo_departments d ON d.name = e.department
+WHERE NOT EXISTS (
+    SELECT 1 FROM demo_employees de WHERE de.name = e.name
+);
+SQL
+
+    print_success "演示数据准备完成"
+}
+
+# 检查实时模式数据库连通性
+verify_realtime_ready() {
+    print_info "正在验证实时模式数据库连通性..."
+    if sudo -u postgres psql -d pg_query_demo -c "SELECT COUNT(*) AS employee_count FROM demo_employees;" >/dev/null 2>&1; then
+        print_success "实时模式数据库验证通过"
+    else
+        print_error "实时模式数据库验证失败"
+        exit 1
+    fi
+}
+
 # 构建项目
 build_project() {
     print_info "正在构建项目..."
@@ -236,7 +306,8 @@ show_usage() {
     echo ""
     echo "选项:"
     echo "  all         安装所有依赖并运行测试（默认）"
-    echo "  install     只安装（PostgreSQL + 项目依赖 + 构建）"
+    echo "  install     只安装（PostgreSQL + 依赖 + 迁移 + 演示数据 + 构建）"
+    echo "  realtime    仅准备实时模式（PostgreSQL + 迁移 + 演示数据）"
     echo "  test        只运行测试（需要先安装）"
     echo "  pg-only     只安装和配置 PostgreSQL"
     echo "  -h, help    显示此帮助信息"
@@ -245,6 +316,7 @@ show_usage() {
     echo "  sudo ./install_and_test.sh          # 完整安装和测试"
     echo "  sudo ./install_and_test.sh all      # 完整安装和测试"
     echo "  sudo ./install_and_test.sh install  # 只安装"
+    echo "  sudo ./install_and_test.sh realtime # 只准备实时模式"
     echo "  ./install_and_test.sh test          # 只运行测试"
     echo "  sudo ./install_and_test.sh pg-only  # 只安装 PostgreSQL"
     echo ""
@@ -270,6 +342,42 @@ main() {
             configure_postgresql
             echo ""
             print_success "PostgreSQL 安装完成！"
+            exit 0
+            ;;
+        realtime)
+            check_root
+            detect_os
+            echo ""
+
+            install_postgresql
+            echo ""
+
+            configure_postgresql
+            echo ""
+
+            check_nodejs
+            echo ""
+
+            check_pnpm
+            echo ""
+
+            create_env_file
+            echo ""
+
+            install_dependencies
+            echo ""
+
+            run_db_migrations
+            echo ""
+
+            seed_realtime_demo_data
+            echo ""
+
+            verify_realtime_ready
+            echo ""
+
+            print_success "实时模式环境已准备完成！"
+            print_info "下一步运行：./start.sh"
             exit 0
             ;;
         test)
@@ -325,11 +433,23 @@ main() {
             install_dependencies
             echo ""
             
-            # 7. 构建项目
+            # 7. 数据库迁移
+            run_db_migrations
+            echo ""
+
+            # 8. 准备演示数据（实时模式）
+            seed_realtime_demo_data
+            echo ""
+
+            # 9. 验证实时模式
+            verify_realtime_ready
+            echo ""
+
+            # 10. 构建项目
             build_project
             echo ""
             
-            # 8. 运行测试（仅当选择 all 时）
+            # 11. 运行测试（仅当选择 all 时）
             if [ "${1:-all}" = "all" ]; then
                 print_info "运行测试套件..."
                 echo ""
