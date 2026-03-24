@@ -1,5 +1,6 @@
 import { eq, desc, and, gte } from "drizzle-orm";
 import { db } from "./db";
+import { getClient } from "./db";
 import { 
   querySessions, 
   optimizationStages, 
@@ -184,19 +185,19 @@ export async function analyzeQuery(sql: string, databaseName: string = "postgres
  * Execute a specific optimization stage
  */
 async function executeStage(sql: string, stage: string): Promise<any> {
-  const client = await db.$client();
+  const client = await getClient();
   
   try {
     switch (stage) {
       case "parse": {
         // Use pg_parse_query to get parse tree
-        const result = await client.queryUnsafe(`SELECT pg_parse_query($1) as parse_tree`, [sql]);
+        const result = await client.query(`SELECT pg_parse_query($1) as parse_tree`, [sql]);
         return { parseTree: result.rows[0]?.parse_tree };
       }
       
       case "analyze": {
         // Parse and analyze the query
-        const result = await client.queryUnsafe(`SELECT pg_parse_analyze($1) as analyze_data`, [sql]);
+        const result = await client.query(`SELECT pg_parse_analyze($1) as analyze_data`, [sql]);
         return { analyzeData: result.rows[0]?.analyze_data };
       }
       
@@ -207,13 +208,13 @@ async function executeStage(sql: string, stage: string): Promise<any> {
       
       case "plan": {
         // Get query plan using EXPLAIN
-        const explainResult = await client.queryUnsafe(`EXPLAIN (FORMAT JSON, VERBOSE, BUFFERS) ${sql}`);
+        const explainResult = await client.query(`EXPLAIN (FORMAT JSON, VERBOSE, BUFFERS) ${sql}`);
         return { plan: explainResult.rows };
       }
       
       case "explain": {
         // Detailed explain with execution stats
-        const explainAnalyzeResult = await client.queryUnsafe(`EXPLAIN (ANALYZE, BUFFERS, VERBOSE) ${sql}`);
+        const explainAnalyzeResult = await client.query(`EXPLAIN (ANALYZE, BUFFERS, VERBOSE) ${sql}`);
         return { explainData: explainAnalyzeResult.rows };
       }
       
@@ -224,7 +225,7 @@ async function executeStage(sql: string, stage: string): Promise<any> {
       
       case "execute_end": {
         // Execute and get results
-        const result = await client.queryUnsafe(sql);
+        const result = await client.query(sql);
         return { 
           executed: true, 
           rowCount: result.rowCount,

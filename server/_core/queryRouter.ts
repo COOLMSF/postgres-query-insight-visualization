@@ -123,7 +123,7 @@ export const queryRouter = router({
    */
   testConnection: publicProcedure.query(async () => {
     try {
-      const { testConnection } = await import("./db");
+      const { testConnection } = await import("../db");
       const connected = await testConnection();
       return {
         success: connected,

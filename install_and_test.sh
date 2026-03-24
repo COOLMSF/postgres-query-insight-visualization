@@ -197,15 +197,11 @@ install_dependencies() {
 
 # 运行数据库迁移
 run_db_migrations() {
-    print_info "正在执行数据库迁移..."
-    set -a
-    source .env
-    set +a
-
-    if pnpm db:push; then
-        print_success "数据库迁移完成"
+    print_info "正在初始化实时模式数据库结构..."
+    if psql "postgresql://postgres:postgres@localhost:5432/pg_query_demo" -f drizzle/0002_realtime_pg_query.sql; then
+        print_success "数据库结构初始化完成"
     else
-        print_error "数据库迁移失败"
+        print_error "数据库结构初始化失败"
         exit 1
     fi
 }
@@ -213,8 +209,7 @@ run_db_migrations() {
 # 创建实时模式演示表和数据
 seed_realtime_demo_data() {
     print_info "正在创建实时模式演示数据..."
-
-    sudo -u postgres psql -d pg_query_demo <<'SQL'
+    psql "postgresql://postgres:postgres@localhost:5432/pg_query_demo" <<'SQL'
 CREATE TABLE IF NOT EXISTS demo_departments (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
@@ -257,7 +252,7 @@ SQL
 # 检查实时模式数据库连通性
 verify_realtime_ready() {
     print_info "正在验证实时模式数据库连通性..."
-    if sudo -u postgres psql -d pg_query_demo -c "SELECT COUNT(*) AS employee_count FROM demo_employees;" >/dev/null 2>&1; then
+    if psql "postgresql://postgres:postgres@localhost:5432/pg_query_demo" -c "SELECT COUNT(*) AS employee_count FROM demo_employees;" >/dev/null 2>&1; then
         print_success "实时模式数据库验证通过"
     else
         print_error "实时模式数据库验证失败"
