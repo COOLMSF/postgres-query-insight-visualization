@@ -9,6 +9,7 @@ import SessionDetail from "@/pages/SessionDetail";
 import Compare from "@/pages/Compare";
 import History from "@/pages/History";
 import Statistics from "@/pages/Statistics";
+import PGSourceCompile from "@/pages/PGSourceCompile";
 import DashboardLayout from "@/components/DashboardLayout";
 
 function Router() {
@@ -22,6 +23,7 @@ function Router() {
             <Route path="/compare" component={Compare} />
             <Route path="/history" component={History} />
             <Route path="/statistics" component={Statistics} />
+            <Route path="/pg-source" component={PGSourceCompile} />
             <Route path="/404" component={NotFound} />
             <Route component={NotFound} />
           </Switch>

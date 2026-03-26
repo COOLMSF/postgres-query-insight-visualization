@@ -37,6 +37,7 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Hammer,
 } from "lucide-react";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
@@ -346,9 +347,22 @@ export default function Home() {
             输入 SQL 查询，可视化 PostgreSQL 查询优化过程
           </p>
         </div>
-        
-        {/* Data mode toggle */}
+
+        {/* Data mode toggle and PG Source button */}
         <div className="flex items-center gap-2">
+          {/* PG Source Compile Button */}
+          <Button
+            variant="outline"
+            onClick={() => setLocation("/pg-source")}
+            className="gap-2 border-purple-500/30 hover:border-purple-500/50 hover:bg-purple-500/10"
+          >
+            <Hammer className="h-4 w-4 text-purple-400" />
+            <span className="hidden sm:inline">PG 源码编译</span>
+            <Badge className="h-5 text-[10px] bg-purple-500/20 text-purple-300 border-purple-500/30">
+              源码级
+            </Badge>
+          </Button>
+
           <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg border bg-card">
             <Button
               variant={dataMode === "mock" ? "default" : "ghost"}

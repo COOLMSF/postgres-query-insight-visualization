@@ -10,8 +10,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Database, LayoutDashboard, PanelLeft, GitCompare, Clock, BarChart3 } from "lucide-react";
+import { Database, LayoutDashboard, PanelLeft, GitCompare, Clock, BarChart3, Terminal, Hammer } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
@@ -20,6 +21,7 @@ const menuItems = [
   { icon: Clock, label: "历史记录", path: "/history" },
   { icon: GitCompare, label: "对比", path: "/compare" },
   { icon: BarChart3, label: "统计", path: "/statistics" },
+  { icon: Hammer, label: "PG 源码编译", path: "/pg-source", highlight: true },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -138,10 +140,19 @@ function DashboardLayoutContent({
                       isActive={isActive}
                       onClick={() => setLocation(item.path)}
                       tooltip={item.label}
-                      className="h-10 transition-all font-normal"
+                      className={`h-10 transition-all font-normal ${
+                        item.highlight 
+                          ? "bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 hover:border-purple-500/50 hover:from-purple-500/20 hover:to-blue-500/20" 
+                          : ""
+                      }`}
                     >
-                      <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
+                      <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : item.highlight ? "text-purple-400" : ""}`} />
                       <span>{item.label}</span>
+                      {item.highlight && (
+                        <Badge className="ml-auto h-5 text-[10px] bg-purple-500/20 text-purple-300 border-purple-500/30">
+                          源码级
+                        </Badge>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
