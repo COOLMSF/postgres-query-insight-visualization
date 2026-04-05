@@ -332,7 +332,32 @@ export default function Home() {
   );
   const currentPaths = dataMode === "mock" ? DEMO_PATHS[(currentSession as any)?.session_id ?? 1] || [] : realtimePaths;
   const displayActiveStage = dataMode === "mock" ? activeStage : realtimeActiveStage;
-  const displayActiveStageForDetail = dataMode === "mock" ? activeStage : null; // StageDetail only works with TraceStage for now
+  // Convert realtime stage to TraceStage shape so StageDetail can render it
+  const displayActiveStageForDetail = useMemo(() => {
+    if (dataMode === "mock") return activeStage;
+    if (!realtimeActiveStage) return null;
+    const s = realtimeActiveStage as any;
+    const stageData = s.stageData;
+    let explainOutput: string | null = null;
+    if (s.stageName === "plan" && stageData?.plan) {
+      explainOutput = JSON.stringify(stageData.plan);
+    }
+    return {
+      stage_id: s.id,
+      session_id: s.sessionId,
+      stage_seq: s.stageSeq,
+      stage_name: s.stageName,
+      stage_data: stageData ? JSON.stringify(stageData) : null,
+      plan_tree: null,
+      explain_output: explainOutput,
+      node_type: null,
+      estimated_cost: null,
+      estimated_rows: null,
+      actual_duration_ms: s.durationMs ?? 0,
+      created_at: s.createdAt ?? "",
+      metadata: {},
+    } as import("@/lib/mockData").TraceStage;
+  }, [dataMode, activeStage, realtimeActiveStage]);
 
   const isDbConnected = testConnection.data?.success ?? false;
   const isAnalyzingRealtime = analyze.isPending;

@@ -11,6 +11,7 @@ import {
   type TraceStage,
   type TracePath,
 } from "@/lib/mockData";
+import { trpc } from "@/lib/trpc";
 import {
   ArrowLeft,
   Play,
@@ -24,6 +25,7 @@ import {
   User,
   Calendar,
   Route,
+  Loader2,
 } from "lucide-react";
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
@@ -34,13 +36,114 @@ export default function SessionDetail() {
   const [, setLocation] = useLocation();
   const sessionId = Number(params.id);
 
-  const session = DEMO_SESSIONS.find(s => s.session_id === sessionId);
-  const stages = DEMO_STAGES[sessionId] || [];
-  const paths = DEMO_PATHS[sessionId] || [];
+  // Try mock data first
+  const mockSession = DEMO_SESSIONS.find(s => s.session_id === sessionId);
+  const mockStages = DEMO_STAGES[sessionId] || [];
+  const mockPaths = DEMO_PATHS[sessionId] || [];
+  const isMockMode = !!mockSession;
 
-  const [activeStageSeq, setActiveStageSeq] = useState<number | null>(
-    stages.length > 0 ? stages[0].stage_seq : null
+  // Fetch from API if not found in mock data
+  const apiQuery = trpc.query.getSessionDetail.useQuery(
+    { sessionId },
+    { enabled: !isMockMode, retry: false }
   );
+
+  // Unified data accessors
+  const sessionData = useMemo(() => {
+    if (isMockMode && mockSession) {
+      return {
+        id: mockSession.session_id,
+        queryText: mockSession.query_text,
+        databaseName: mockSession.database_name,
+        userName: mockSession.username,
+        startTime: mockSession.start_time,
+        totalDurationMs: mockSession.total_duration_ms,
+        totalStages: mockSession.total_stages,
+        status: mockSession.status,
+      };
+    }
+    if (apiQuery.data?.data?.session) {
+      const s = apiQuery.data.data.session;
+      return {
+        id: s.id,
+        queryText: s.queryText,
+        databaseName: s.databaseName,
+        userName: s.userName,
+        startTime: s.startTime,
+        totalDurationMs: s.totalDurationMs ?? 0,
+        totalStages: s.totalStages,
+        status: s.status,
+      };
+    }
+    return null;
+  }, [isMockMode, mockSession, apiQuery.data]);
+
+  // Normalize stages to a common shape for pipeline + duration breakdown
+  const normalizedStages = useMemo(() => {
+    if (isMockMode) {
+      return mockStages.map(s => ({
+        key: s.stage_id,
+        stageSeq: s.stage_seq,
+        stageName: s.stage_name,
+        durationMs: s.actual_duration_ms,
+        stageData: s.stage_data,
+        explainOutput: s.explain_output,
+        estimatedCost: s.estimated_cost,
+        estimatedRows: s.estimated_rows,
+        raw: s,
+      }));
+    }
+    if (apiQuery.data?.data?.stages) {
+      return apiQuery.data.data.stages.map((s: any) => ({
+        key: s.id,
+        stageSeq: s.stageSeq,
+        stageName: s.stageName,
+        durationMs: s.durationMs ?? 0,
+        stageData: s.stageData,
+        explainOutput: null,
+        estimatedCost: null,
+        estimatedRows: null,
+        raw: s,
+      }));
+    }
+    return [];
+  }, [isMockMode, mockStages, apiQuery.data]);
+
+  // Normalize paths
+  const normalizedPaths = useMemo(() => {
+    if (isMockMode) {
+      return mockPaths.map(p => ({
+        key: p.path_id,
+        pathType: p.path_type,
+        pathDescription: p.path_description,
+        totalCost: p.total_cost,
+        startupCost: p.startup_cost,
+        rowsEstimate: p.rows_estimate,
+        isSelected: p.is_selected,
+      }));
+    }
+    if (apiQuery.data?.data?.paths) {
+      return apiQuery.data.data.paths.map((p: any) => ({
+        key: p.id,
+        pathType: p.pathType,
+        pathDescription: p.pathDescription,
+        totalCost: p.totalCost,
+        startupCost: p.startupCost,
+        rowsEstimate: p.rowsEstimate,
+        isSelected: p.isSelected,
+      }));
+    }
+    return [];
+  }, [isMockMode, mockPaths, apiQuery.data]);
+
+  const [activeStageSeq, setActiveStageSeq] = useState<number | null>(null);
+
+  // Set initial active stage when data loads
+  useEffect(() => {
+    if (normalizedStages.length > 0 && activeStageSeq === null) {
+      setActiveStageSeq(normalizedStages[0].stageSeq);
+    }
+  }, [normalizedStages, activeStageSeq]);
 
   // Replay state
   const [replayMode, setReplayMode] = useState(false);
@@ -49,19 +152,53 @@ export default function SessionDetail() {
   const [replaySpeed, setReplaySpeed] = useState(1000);
   const replayTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const activeStage = useMemo(() => {
+  const activeStageData = useMemo(() => {
     if (activeStageSeq === null) return null;
-    return stages.find(s => s.stage_seq === activeStageSeq) || null;
-  }, [stages, activeStageSeq]);
+    return normalizedStages.find(s => s.stageSeq === activeStageSeq) || null;
+  }, [normalizedStages, activeStageSeq]);
+
+  // Build a TraceStage-compatible object for StageDetail (works for both modes)
+  const activeStageForDetail: TraceStage | null = useMemo(() => {
+    if (!activeStageData) return null;
+    if (isMockMode) return activeStageData.raw as TraceStage;
+    // Convert realtime stage to TraceStage shape for StageDetail
+    const raw = activeStageData.raw as any;
+    const stageData = raw.stageData;
+    // For explain stage, stageData.explainData contains the EXPLAIN rows
+    let explainOutput: string | null = null;
+    if (activeStageData.stageName === "explain" && stageData?.explainData) {
+      // explainData is array of {QUERY PLAN: string} rows from EXPLAIN (ANALYZE, BUFFERS, VERBOSE)
+      explainOutput = null; // text format, not JSON tree — skip tree view
+    }
+    if (activeStageData.stageName === "plan" && stageData?.plan) {
+      // plan stage has JSON plan data — convert to explain_output for tree view
+      explainOutput = JSON.stringify(stageData.plan);
+    }
+    return {
+      stage_id: raw.id,
+      session_id: raw.sessionId,
+      stage_seq: raw.stageSeq,
+      stage_name: raw.stageName,
+      stage_data: stageData ? JSON.stringify(stageData) : null,
+      plan_tree: null,
+      explain_output: explainOutput,
+      node_type: null,
+      estimated_cost: null,
+      estimated_rows: null,
+      actual_duration_ms: raw.durationMs ?? 0,
+      created_at: raw.createdAt ?? "",
+      metadata: {},
+    };
+  }, [activeStageData, isMockMode]);
 
   // Replay controls
   const startReplay = useCallback(() => {
-    if (stages.length === 0) return;
+    if (normalizedStages.length === 0) return;
     setReplayMode(true);
     setReplayStage(0);
     setReplayPlaying(true);
-    setActiveStageSeq(stages[0].stage_seq);
-  }, [stages]);
+    setActiveStageSeq(normalizedStages[0].stageSeq);
+  }, [normalizedStages]);
 
   const toggleReplayPause = useCallback(() => {
     setReplayPlaying(prev => !prev);
@@ -69,31 +206,31 @@ export default function SessionDetail() {
 
   const replayStep = useCallback(() => {
     setReplayStage(prev => {
-      const next = Math.min(prev + 1, stages.length - 1);
-      setActiveStageSeq(stages[next].stage_seq);
+      const next = Math.min(prev + 1, normalizedStages.length - 1);
+      setActiveStageSeq(normalizedStages[next].stageSeq);
       return next;
     });
-  }, [stages]);
+  }, [normalizedStages]);
 
   const resetReplay = useCallback(() => {
     setReplayMode(false);
     setReplayPlaying(false);
     setReplayStage(0);
-    if (stages.length > 0) {
-      setActiveStageSeq(stages[0].stage_seq);
+    if (normalizedStages.length > 0) {
+      setActiveStageSeq(normalizedStages[0].stageSeq);
     }
-  }, [stages]);
+  }, [normalizedStages]);
 
   useEffect(() => {
     if (replayPlaying && replayMode) {
       replayTimerRef.current = setInterval(() => {
         setReplayStage(prev => {
-          if (prev >= stages.length - 1) {
+          if (prev >= normalizedStages.length - 1) {
             setReplayPlaying(false);
             return prev;
           }
           const next = prev + 1;
-          setActiveStageSeq(stages[next].stage_seq);
+          setActiveStageSeq(normalizedStages[next].stageSeq);
           return next;
         });
       }, replaySpeed);
@@ -101,9 +238,19 @@ export default function SessionDetail() {
     return () => {
       if (replayTimerRef.current) clearInterval(replayTimerRef.current);
     };
-  }, [replayPlaying, replayMode, replaySpeed, stages]);
+  }, [replayPlaying, replayMode, replaySpeed, normalizedStages]);
 
-  if (!session) {
+  // Loading state for API mode
+  if (!isMockMode && apiQuery.isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-4" />
+        <p className="text-muted-foreground">加载会话数据...</p>
+      </div>
+    );
+  }
+
+  if (!sessionData) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <p className="text-muted-foreground mb-4">会话不存在</p>
@@ -125,15 +272,15 @@ export default function SessionDetail() {
           </Button>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-foreground">
-              会话 #{session.session_id}
+              会话 #{sessionData.id}
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               完整优化跟踪视图
             </p>
           </div>
         </div>
-        <Badge variant={session.status === "completed" ? "default" : "secondary"}>
-          {session.status === "completed" ? "已完成" : session.status}
+        <Badge variant={sessionData.status === "completed" ? "default" : "secondary"}>
+          {sessionData.status === "completed" ? "已完成" : sessionData.status}
         </Badge>
       </div>
 
@@ -141,17 +288,17 @@ export default function SessionDetail() {
       <Card className="bg-card/50 border-border/50">
         <CardContent className="py-4 px-5">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <MetaItem icon={Timer} label="耗时" value={`${session.total_duration_ms}毫秒`} />
-            <MetaItem icon={Layers} label="阶段" value={String(session.total_stages)} />
-            <MetaItem icon={Database} label="数据库" value={session.database_name} />
-            <MetaItem icon={User} label="用户" value={session.username} />
-            <MetaItem icon={Calendar} label="时间" value={new Date(session.start_time).toLocaleString()} />
+            <MetaItem icon={Timer} label="耗时" value={`${typeof sessionData.totalDurationMs === 'number' ? sessionData.totalDurationMs.toFixed(2) : sessionData.totalDurationMs}毫秒`} />
+            <MetaItem icon={Layers} label="阶段" value={String(sessionData.totalStages)} />
+            <MetaItem icon={Database} label="数据库" value={sessionData.databaseName} />
+            <MetaItem icon={User} label="用户" value={sessionData.userName} />
+            <MetaItem icon={Calendar} label="时间" value={new Date(sessionData.startTime).toLocaleString()} />
           </div>
           <Separator className="my-3" />
           <div>
             <p className="text-xs text-muted-foreground mb-1.5">查询</p>
             <pre className="text-sm font-mono text-foreground/90 bg-background/50 rounded-lg p-3 overflow-auto max-h-24 whitespace-pre-wrap">
-              {session.query_text}
+              {sessionData.queryText}
             </pre>
           </div>
         </CardContent>
@@ -191,7 +338,7 @@ export default function SessionDetail() {
                     <option value={250}>4 倍</option>
                   </select>
                   <Badge variant="secondary" className="text-xs font-mono ml-1">
-                    {replayStage + 1}/{stages.length}
+                    {replayStage + 1}/{normalizedStages.length}
                   </Badge>
                 </>
               )}
@@ -204,29 +351,34 @@ export default function SessionDetail() {
       <Card className="bg-card/50 border-border/50">
         <CardContent className="py-4 px-4">
           <StagePipeline
-            stages={stages}
-            activeStage={activeStageSeq}
+            stages={normalizedStages.map(s => ({
+              stage_seq: s.stageSeq,
+              stage_name: s.stageName,
+              actual_duration_ms: s.durationMs,
+              stage_id: s.key,
+            }))}
+            activeStageSeq={activeStageSeq}
             onStageClick={setActiveStageSeq}
             replayMode={replayMode}
-            currentReplayStage={replayMode ? stages[replayStage]?.stage_seq : undefined}
+            currentReplayStage={replayMode ? normalizedStages[replayStage]?.stageSeq : undefined}
           />
         </CardContent>
       </Card>
 
       {/* Stage Detail */}
-      {activeStage && (
+      {activeStageForDetail && (
         <motion.div
-          key={activeStage.stage_id}
+          key={activeStageForDetail.stage_id}
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.2 }}
         >
-          <StageDetail stage={activeStage} />
+          <StageDetail stage={activeStageForDetail} />
         </motion.div>
       )}
 
       {/* Candidate Paths */}
-      {paths.length > 0 && (
+      {normalizedPaths.length > 0 && (
         <Card className="bg-card/50 border-border/50">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -236,11 +388,11 @@ export default function SessionDetail() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {paths.map(path => (
+              {normalizedPaths.map(path => (
                 <div
-                  key={path.path_id}
+                  key={path.key}
                   className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
-                    path.is_selected
+                    path.isSelected
                       ? "bg-primary/5 border-primary/30"
                       : "bg-muted/10 border-border/30"
                   }`}
@@ -248,25 +400,25 @@ export default function SessionDetail() {
                   <div className="flex items-center gap-3">
                     <div
                       className={`h-2.5 w-2.5 rounded-full ${
-                        path.is_selected ? "bg-primary" : "bg-muted-foreground/30"
+                        path.isSelected ? "bg-primary" : "bg-muted-foreground/30"
                       }`}
                     />
                     <div>
-                      <p className={`text-sm font-mono ${path.is_selected ? "text-primary font-medium" : "text-foreground/70"}`}>
-                        {path.path_type}
+                      <p className={`text-sm font-mono ${path.isSelected ? "text-primary font-medium" : "text-foreground/70"}`}>
+                        {path.pathType}
                       </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{path.path_description}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{path.pathDescription}</p>
                     </div>
-                    {path.is_selected && (
+                    {path.isSelected && (
                       <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20">
                         最优
                       </Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
-                    <span>成本：{path.total_cost.toFixed(2)}</span>
-                    <span>启动：{path.startup_cost.toFixed(2)}</span>
-                    <span>行数：{path.rows_estimate}</span>
+                    <span>成本：{path.totalCost.toFixed(2)}</span>
+                    <span>启动：{path.startupCost.toFixed(2)}</span>
+                    <span>行数：{path.rowsEstimate}</span>
                   </div>
                 </div>
               ))}
@@ -285,14 +437,15 @@ export default function SessionDetail() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {stages.map(stage => {
-              const pct = session.total_duration_ms > 0
-                ? (stage.actual_duration_ms / session.total_duration_ms) * 100
+            {normalizedStages.map(stage => {
+              const totalMs = sessionData.totalDurationMs ?? 0;
+              const pct = totalMs > 0
+                ? (stage.durationMs / totalMs) * 100
                 : 0;
               return (
-                <div key={stage.stage_id} className="flex items-center gap-3">
+                <div key={stage.key} className="flex items-center gap-3">
                   <span className="text-xs text-muted-foreground w-28 shrink-0 capitalize">
-                    {stage.stage_name.replace(/_/g, " ")}
+                    {stage.stageName.replace(/_/g, " ")}
                   </span>
                   <div className="flex-1 h-2 bg-muted/30 rounded-full overflow-hidden">
                     <motion.div
@@ -303,7 +456,7 @@ export default function SessionDetail() {
                     />
                   </div>
                   <span className="text-xs font-mono text-muted-foreground w-16 text-right">
-                    {stage.actual_duration_ms.toFixed(1)}ms
+                    {stage.durationMs.toFixed(1)}ms
                   </span>
                   <span className="text-xs font-mono text-muted-foreground/60 w-12 text-right">
                     {pct.toFixed(1)}%

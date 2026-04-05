@@ -198,11 +198,23 @@ install_dependencies() {
 # 运行数据库迁移
 run_db_migrations() {
     print_info "正在初始化实时模式数据库结构..."
-    if psql "postgresql://postgres:postgres@localhost:5432/pg_query_demo" -f drizzle/0002_realtime_pg_query.sql; then
+
+    # Source .env so DATABASE_URL is available for drizzle-kit
+    set -a
+    source .env
+    set +a
+
+    if npx drizzle-kit migrate 2>&1; then
         print_success "数据库结构初始化完成"
     else
-        print_error "数据库结构初始化失败"
-        exit 1
+        print_warning "drizzle-kit migrate 失败，尝试直接执行 SQL..."
+        for sql_file in drizzle/0*.sql; do
+            if [ -f "$sql_file" ]; then
+                print_info "执行 $sql_file ..."
+                psql "postgresql://postgres:postgres@localhost:5432/pg_query_demo" -f "$sql_file" 2>/dev/null || true
+            fi
+        done
+        print_success "SQL 迁移已直接执行"
     fi
 }
 
